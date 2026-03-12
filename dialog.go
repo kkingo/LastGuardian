@@ -88,6 +88,15 @@ func buildWPFScript(s ApprovalSummary, timeout int) string {
 	projectDir := psEscape(s.ProjectDir)
 	timestamp := psEscape(s.Timestamp)
 
+	// Tool description (Claude's intent for this operation)
+	toolDescription := psEscape(s.ToolDescription)
+	if toolDescription == "" {
+		toolDescription = "(N/A)"
+	}
+	if len(toolDescription) > 500 {
+		toolDescription = toolDescription[:500] + "..."
+	}
+
 	// Command preview (escape for PS)
 	cmdPreview := psEscape(s.CommandPreview)
 	if len(cmdPreview) > 2000 {
@@ -113,7 +122,7 @@ $result = $false
 $window = New-Object System.Windows.Window
 $window.Title = '%s'
 $window.Width = 680
-$window.Height = 760
+$window.Height = 800
 $window.WindowStartupLocation = 'CenterScreen'
 $window.ResizeMode = 'NoResize'
 $window.Topmost = $true
@@ -165,7 +174,7 @@ $root.Children.Add($headerPanel)
 # === TOP: Session Info (Dock=Top, fixed height 200px) ===
 $infoOuter = New-Object System.Windows.Controls.DockPanel
 $infoOuter.LastChildFill = $true
-$infoOuter.Height = 200
+$infoOuter.Height = 240
 $infoOuter.Margin = '0,0,0,20'
 [System.Windows.Controls.DockPanel]::SetDock($infoOuter, 'Top')
 
@@ -202,6 +211,21 @@ $opVal.Text = '%s'
 $opVal.FontWeight = 'SemiBold'
 $opLine.Inlines.Add($opVal)
 $infoPanel.Children.Add($opLine)
+
+$intentLine = New-Object System.Windows.Controls.TextBlock
+$intentLine.FontSize = 17
+$intentLine.FontFamily = 'Consolas'
+$intentLine.Margin = '0,0,0,5'
+$intentLine.TextWrapping = 'Wrap'
+$intentRun = New-Object System.Windows.Documents.Run
+$intentRun.Text = 'Intent:    '
+$intentRun.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString('#888888')
+$intentLine.Inlines.Add($intentRun)
+$intentVal = New-Object System.Windows.Documents.Run
+$intentVal.Text = '%s'
+$intentVal.FontWeight = 'SemiBold'
+$intentLine.Inlines.Add($intentVal)
+$infoPanel.Children.Add($intentLine)
 
 $sessLine = New-Object System.Windows.Controls.TextBlock
 $sessLine.FontSize = 17
@@ -341,6 +365,7 @@ if ($result) { exit 0 } else { exit 1 }
 		psEscape(s.RiskLevel),
 		layersText,
 		psEscape(s.OperationType),
+		toolDescription,
 		sessionID,
 		projectDir,
 		timestamp,

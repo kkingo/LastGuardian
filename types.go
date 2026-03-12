@@ -30,6 +30,7 @@ type ApprovalSummary struct {
 	Timestamp          string   `json:"timestamp"`
 	SessionID          string   `json:"session_id"`
 	ProjectDir         string   `json:"project_dir"`
+	ToolDescription    string   `json:"tool_description,omitempty"`
 }
 
 // CacheEntry represents a single authorization record in the session cache.

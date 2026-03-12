@@ -98,6 +98,7 @@ func handleFileTool(p Payload, projectDir string) {
 		return // no path specified → allow
 	}
 
+	toolDesc := p.ToolInput["description"]
 	absPath := toAbsNormalized(path, projectDir)
 	if isOutsideProject(absPath, projectDir, &cfg) {
 		// Layer 4: PATH_BOUNDARY
@@ -112,6 +113,7 @@ func handleFileTool(p Payload, projectDir string) {
 		)
 		summary.SessionID = sid
 		summary.ProjectDir = projectDir
+		summary.ToolDescription = toolDesc
 
 		// Check session cache
 		if cfg.SessionCache.Enabled {
@@ -222,6 +224,7 @@ func handleBashTool(p Payload, projectDir string) {
 		return
 	}
 
+	toolDesc := p.ToolInput["description"]
 	sid := getSessionID()
 
 	// Pre-split check: pipe-to-shell pattern
@@ -294,7 +297,7 @@ func handleBashTool(p Payload, projectDir string) {
 		// Layer 3a: Git remote modification (prompt)
 		if hit, desc := checkGitRemoteAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
-				[]string{"Layer 3: INTERACTIVE_AUTH (git-remote)"}) {
+				[]string{"Layer 3: INTERACTIVE_AUTH (git-remote)"}, toolDesc) {
 				blockExit(desc + " - denied by user")
 			}
 			continue
@@ -303,7 +306,7 @@ func handleBashTool(p Payload, projectDir string) {
 		// Layer 3b: Network commands (always prompt)
 		if hit, desc := checkNetworkAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
-				[]string{"Layer 3: INTERACTIVE_AUTH (network)"}) {
+				[]string{"Layer 3: INTERACTIVE_AUTH (network)"}, toolDesc) {
 				blockExit(desc + " - denied by user")
 			}
 			continue
@@ -312,7 +315,7 @@ func handleBashTool(p Payload, projectDir string) {
 		// Layer 3c: Path-sensitive commands (rm/rmdir, path-based judgment)
 		if hit, desc := checkPathSensitiveAuth(parts, projectDir); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
-				[]string{"Layer 3: INTERACTIVE_AUTH (path-sensitive)"}) {
+				[]string{"Layer 3: INTERACTIVE_AUTH (path-sensitive)"}, toolDesc) {
 				blockExit(desc + " - denied by user")
 			}
 			continue
@@ -323,7 +326,7 @@ func handleBashTool(p Payload, projectDir string) {
 		for _, p := range outsidePaths {
 			desc := "Path outside project: " + p
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
-				[]string{"Layer 4: PATH_BOUNDARY"}) {
+				[]string{"Layer 4: PATH_BOUNDARY"}, toolDesc) {
 				blockExit("Path boundary: " + p + " denied by user")
 			}
 		}
@@ -351,6 +354,7 @@ func handleInteractiveAuth(
 	projectDir string,
 	desc string,
 	layers []string,
+	toolDescription string,
 ) bool {
 	cacheKey := computeCacheKey(cmdStr, projectDir)
 
@@ -378,6 +382,7 @@ func handleInteractiveAuth(
 	summary := buildApprovalSummary(desc, cmdStr, parts, projectDir, layers, &cfg)
 	summary.SessionID = sessionID
 	summary.ProjectDir = projectDir
+	summary.ToolDescription = toolDescription
 	allowed := dialog.RequestApproval(summary)
 
 	// Write to cache

@@ -111,50 +111,22 @@ func checkContextual(parts []string, projectDir string) (bool, string) {
 			}
 		}
 
-	// Rule group 2: npm / pnpm / yarn
+	// Rule group 2: npm / pnpm / yarn (publish only; global install moved to Layer 3)
 	case "npm", "pnpm", "yarn":
-		if hasAnyFlag(parts, "-g", "--global") {
-			return true, fmt.Sprintf("Global install blocked: %s -g", base)
-		}
 		if sub == "publish" {
 			return true, fmt.Sprintf("Package publish blocked: %s publish", base)
 		}
 
-	// Rule group 3: pip / pip3
+	// Rule group 3: pip / pip3 (uninstall only; global install moved to Layer 3)
 	case "pip", "pip3":
-		switch sub {
-		case "install":
-			if !inVirtualEnv() {
-				if !hasAnyFlag(parts, "--target", "-t", "--user") {
-					return true, "pip install blocked: no virtual environment detected"
-				}
-			}
-		case "uninstall":
+		if sub == "uninstall" {
 			return true, fmt.Sprintf("Package uninstall blocked: %s uninstall", base)
 		}
 
-	// Rule group 4: cargo
-	case "cargo":
-		if sub == "install" {
-			return true, "Package install blocked: cargo install"
-		}
-
-	// Rule group 5: go
-	case "go":
-		if sub == "install" {
-			return true, "Package install blocked: go install"
-		}
-
-	// Rule group 6: gem
+	// Rule group 4: gem (uninstall only; install moved to Layer 3)
 	case "gem":
-		if isOneOf(sub, "install", "uninstall") {
-			return true, fmt.Sprintf("Package management blocked: gem %s", sub)
-		}
-
-	// Rule group 7: dotnet
-	case "dotnet":
-		if containsAll(parts, "tool", "install") && hasAnyFlag(parts, "-g", "--global") {
-			return true, "Global install blocked: dotnet tool install -g"
+		if sub == "uninstall" {
+			return true, "Package uninstall blocked: gem uninstall"
 		}
 
 	// Rule group 8: docker
@@ -259,6 +231,47 @@ func checkGitRemoteAuth(parts []string) (bool, string) {
 					return true, "Git remote modification: git config " + arg
 				}
 			}
+		}
+	}
+
+	return false, ""
+}
+
+// checkGlobalInstallAuth checks if a command performs a global package install
+// that modifies the system environment. These require interactive authorization.
+func checkGlobalInstallAuth(parts []string) (bool, string) {
+	if len(parts) == 0 {
+		return false, ""
+	}
+	base := normalizeCmdName(parts[0])
+	sub := getFirstNonFlag(parts, 1)
+
+	switch base {
+	case "npm", "pnpm", "yarn":
+		if hasAnyFlag(parts, "-g", "--global") {
+			return true, fmt.Sprintf("Global install: %s -g", base)
+		}
+	case "pip", "pip3":
+		if sub == "install" && !inVirtualEnv() {
+			if !hasAnyFlag(parts, "--target", "-t", "--user") {
+				return true, fmt.Sprintf("Global install: %s install (no virtual environment)", base)
+			}
+		}
+	case "cargo":
+		if sub == "install" {
+			return true, "Global install: cargo install"
+		}
+	case "go":
+		if sub == "install" {
+			return true, "Global install: go install"
+		}
+	case "gem":
+		if sub == "install" {
+			return true, "Global install: gem install"
+		}
+	case "dotnet":
+		if containsAll(parts, "tool", "install") && hasAnyFlag(parts, "-g", "--global") {
+			return true, "Global install: dotnet tool install -g"
 		}
 	}
 

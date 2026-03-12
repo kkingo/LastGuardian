@@ -49,16 +49,15 @@ func TestContextualBlocked(t *testing.T) {
 		{"git clean -n", []string{"git", "clean", "-n"}, false},
 		{"git branch -D", []string{"git", "branch", "-D", "feature"}, true},
 		{"git branch list", []string{"git", "branch"}, false},
-		{"npm -g", []string{"npm", "install", "-g", "pkg"}, true},
+		// Global installs moved to Layer 3 (interactive auth), no longer blocked here
+		{"npm -g (now L3)", []string{"npm", "install", "-g", "pkg"}, false},
 		{"npm local", []string{"npm", "install", "pkg"}, false},
 		{"npm publish", []string{"npm", "publish"}, true},
-		// pip install is only blocked when no venv is active.
-		// Skip this test if CONDA_DEFAULT_ENV or VIRTUAL_ENV is set.
-		{"pip install no venv", []string{"pip", "install", "pkg"}, !inVirtualEnv()},
+		{"pip install no venv (now L3)", []string{"pip", "install", "pkg"}, false},
 		{"pip uninstall", []string{"pip", "uninstall", "pkg"}, true},
-		{"cargo install", []string{"cargo", "install", "tool"}, true},
+		{"cargo install (now L3)", []string{"cargo", "install", "tool"}, false},
 		{"cargo build", []string{"cargo", "build"}, false},
-		{"go install", []string{"go", "install", "tool"}, true},
+		{"go install (now L3)", []string{"go", "install", "tool"}, false},
 		{"go build", []string{"go", "build"}, false},
 		{"powershell enc", []string{"powershell", "-EncodedCommand", "abc"}, true},
 		{"powershell normal", []string{"powershell", "-Command", "ls"}, false},
@@ -68,6 +67,40 @@ func TestContextualBlocked(t *testing.T) {
 			blocked, _ := checkContextual(tt.parts, projectDir)
 			if blocked != tt.expect {
 				t.Errorf("got %v, want %v", blocked, tt.expect)
+			}
+		})
+	}
+}
+
+func TestGlobalInstallAuth(t *testing.T) {
+	tests := []struct {
+		name   string
+		parts  []string
+		expect bool
+	}{
+		{"npm -g", []string{"npm", "install", "-g", "pkg"}, true},
+		{"npm --global", []string{"npm", "install", "--global", "pkg"}, true},
+		{"npm local (safe)", []string{"npm", "install", "pkg"}, false},
+		{"pnpm -g", []string{"pnpm", "add", "-g", "pkg"}, true},
+		{"yarn --global", []string{"yarn", "global", "add", "--global", "pkg"}, true},
+		{"pip install no venv", []string{"pip", "install", "pkg"}, !inVirtualEnv()},
+		{"pip install --user (safe)", []string{"pip", "install", "--user", "pkg"}, false},
+		{"pip install --target (safe)", []string{"pip", "install", "--target", "/tmp", "pkg"}, false},
+		{"pip3 install no venv", []string{"pip3", "install", "pkg"}, !inVirtualEnv()},
+		{"cargo install", []string{"cargo", "install", "tool"}, true},
+		{"cargo build (safe)", []string{"cargo", "build"}, false},
+		{"go install", []string{"go", "install", "tool"}, true},
+		{"go build (safe)", []string{"go", "build"}, false},
+		{"gem install", []string{"gem", "install", "rails"}, true},
+		{"gem list (safe)", []string{"gem", "list"}, false},
+		{"dotnet tool install -g", []string{"dotnet", "tool", "install", "-g", "tool"}, true},
+		{"dotnet build (safe)", []string{"dotnet", "build"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hit, _ := checkGlobalInstallAuth(tt.parts)
+			if hit != tt.expect {
+				t.Errorf("got %v, want %v", hit, tt.expect)
 			}
 		})
 	}

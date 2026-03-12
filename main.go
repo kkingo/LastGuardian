@@ -312,6 +312,15 @@ func handleBashTool(p Payload, projectDir string) {
 			continue
 		}
 
+		// Layer 3d: Global install commands (prompt)
+		if hit, desc := checkGlobalInstallAuth(parts); hit {
+			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
+				[]string{"Layer 3: INTERACTIVE_AUTH (global-install)"}, toolDesc) {
+				blockExit(desc + " - denied by user")
+			}
+			continue
+		}
+
 		// Layer 3c: Path-sensitive commands (rm/rmdir, path-based judgment)
 		if hit, desc := checkPathSensitiveAuth(parts, projectDir); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "data_dir": "~/.claude/hooks/data",
+  "session_cache": {
+    "enabled": true,
+    "match_mode": "exact_hash"
+  },
+  "history": {
+    "enabled": true,
+    "retention_days": 90
+  },
+  "dialog": {
+    "timeout_seconds": 60,
+    "platform": "auto"
+  },
+  "risk_scoring": {
+    "critical_threshold": 5,
+    "high_threshold": 3,
+    "weights": {
+      "interpreter_wrap": 2,
+      "redirection": 1,
+      "pipe": 1,
+      "out_of_boundary": 2,
+      "multi_path": 1
+    }
+  },
+  "allowed_dirs": [],
+  "custom_rules": {
+    "extra_always_blocked": [],
+    "extra_interactive_auth": [],
+    "extra_contextual_rules": []
+  }
+}

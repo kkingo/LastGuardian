@@ -291,16 +291,25 @@ func handleBashTool(p Payload, projectDir string) {
 	for _, parts := range parsed {
 		cmdStr := strings.Join(parts, " ")
 
-		// Layer 3a: Network commands (always prompt)
-		if hit, desc := checkNetworkAuth(parts); hit {
+		// Layer 3a: Git remote modification (prompt)
+		if hit, desc := checkGitRemoteAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
-				[]string{"Layer 3: INTERACTIVE_AUTH"}) {
+				[]string{"Layer 3: INTERACTIVE_AUTH (git-remote)"}) {
 				blockExit(desc + " - denied by user")
 			}
 			continue
 		}
 
-		// Layer 3b: Path-sensitive commands (rm/rmdir, path-based judgment)
+		// Layer 3b: Network commands (always prompt)
+		if hit, desc := checkNetworkAuth(parts); hit {
+			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
+				[]string{"Layer 3: INTERACTIVE_AUTH (network)"}) {
+				blockExit(desc + " - denied by user")
+			}
+			continue
+		}
+
+		// Layer 3c: Path-sensitive commands (rm/rmdir, path-based judgment)
 		if hit, desc := checkPathSensitiveAuth(parts, projectDir); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (path-sensitive)"}) {

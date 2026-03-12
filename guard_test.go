@@ -73,6 +73,34 @@ func TestContextualBlocked(t *testing.T) {
 	}
 }
 
+func TestGitRemoteAuth(t *testing.T) {
+	tests := []struct {
+		name   string
+		parts  []string
+		expect bool
+	}{
+		{"git remote add", []string{"git", "remote", "add", "origin", "url"}, true},
+		{"git remote set-url", []string{"git", "remote", "set-url", "origin", "url"}, true},
+		{"git remote remove", []string{"git", "remote", "remove", "origin"}, true},
+		{"git remote rm", []string{"git", "remote", "rm", "origin"}, true},
+		{"git remote rename", []string{"git", "remote", "rename", "old", "new"}, true},
+		{"git remote -v (safe)", []string{"git", "remote", "-v"}, false},
+		{"git remote (list)", []string{"git", "remote"}, false},
+		{"git config remote.origin.url", []string{"git", "config", "remote.origin.url", "url"}, true},
+		{"git config remote.origin.fetch", []string{"git", "config", "remote.origin.fetch", "+refs/heads/*"}, true},
+		{"git config user.name (safe)", []string{"git", "config", "user.name", "test"}, false},
+		{"git status (safe)", []string{"git", "status"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hit, _ := checkGitRemoteAuth(tt.parts)
+			if hit != tt.expect {
+				t.Errorf("got %v, want %v", hit, tt.expect)
+			}
+		})
+	}
+}
+
 func TestNetworkAuth(t *testing.T) {
 	tests := []struct {
 		name   string

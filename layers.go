@@ -105,14 +105,6 @@ func checkContextual(parts []string, projectDir string) (bool, string) {
 			if anyFlagContains(parts, "f") {
 				return true, "Dangerous: git clean (removes untracked files)"
 			}
-		case "remote":
-			remoteSub := getFirstNonFlag(parts, 2)
-			if remoteSub == "remote" {
-				remoteSub = getFirstNonFlag(parts, 3)
-			}
-			if isOneOf(remoteSub, "set-url", "add", "remove", "rm", "rename") {
-				return true, fmt.Sprintf("Dangerous: git remote %s", remoteSub)
-			}
 		case "branch":
 			if hasAnyFlag(parts, "-D", "-d", "--delete") {
 				return true, "Dangerous: git branch delete"
@@ -239,6 +231,38 @@ var networkAuth = map[string]string{
 var pathSensitiveAuth = map[string]string{
 	"rm":    "File deletion",
 	"rmdir": "Directory deletion",
+}
+
+// checkGitRemoteAuth checks if a git command modifies remote configuration.
+func checkGitRemoteAuth(parts []string) (bool, string) {
+	if len(parts) == 0 {
+		return false, ""
+	}
+	base := normalizeCmdName(parts[0])
+
+	switch base {
+	case "git":
+		sub := getFirstNonFlag(parts, 1)
+		if sub == "remote" {
+			remoteSub := getFirstNonFlag(parts, 2)
+			if remoteSub == "remote" {
+				remoteSub = getFirstNonFlag(parts, 3)
+			}
+			if isOneOf(remoteSub, "set-url", "add", "remove", "rm", "rename") {
+				return true, fmt.Sprintf("Git remote modification: git remote %s", remoteSub)
+			}
+		}
+		// git config remote.* — semantic equivalent
+		if sub == "config" {
+			for _, arg := range parts[2:] {
+				if strings.HasPrefix(arg, "remote.") {
+					return true, "Git remote modification: git config " + arg
+				}
+			}
+		}
+	}
+
+	return false, ""
 }
 
 // checkNetworkAuth checks if a command is a network command requiring auth.

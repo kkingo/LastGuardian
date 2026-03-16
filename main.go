@@ -227,21 +227,8 @@ func handleBashTool(p Payload, projectDir string) {
 	toolDesc := p.ToolInput["description"]
 	sid := getSessionID()
 
-	// Pre-split check: pipe-to-shell pattern
-	if blocked, reason := checkPipeToShell(command); blocked {
-		recordHistory(HistoryRecord{
-			Timestamp:       time.Now().Format(time.RFC3339),
-			SessionID:       sid,
-			ToolName:        "Bash",
-			RawCommand:      command,
-			NormalizedCmd:   "pipe-to-shell",
-			TriggeredLayers: `["Layer 2: pipe-to-shell"]`,
-			AuthRequired:    false,
-			FinalAction:     "block",
-			ProjectDir:      projectDir,
-		})
-		blockExit(reason)
-	}
+	// Pre-split check: pipe-to-shell pattern (flagged for Layer 3 auth below)
+	pipeToShell, pipeReason := checkPipeToShell(command)
 
 	// Split command into sub-commands
 	subCommands := splitCommand(command)
@@ -253,7 +240,7 @@ func handleBashTool(p Payload, projectDir string) {
 		}
 	}
 
-	// ═══ Pass 1: Hard block scan (Layer 1 + Layer 2) ═══
+	// ═══ Pass 1: Hard block scan (Layer 1 only) ═══
 	for _, parts := range parsed {
 		if blocked, reason := checkAlwaysBlocked(parts); blocked {
 			recordHistory(HistoryRecord{
@@ -269,26 +256,20 @@ func handleBashTool(p Payload, projectDir string) {
 			})
 			blockExit(reason)
 		}
-		if blocked, reason := checkContextual(parts, projectDir); blocked {
-			recordHistory(HistoryRecord{
-				Timestamp:       time.Now().Format(time.RFC3339),
-				SessionID:       sid,
-				ToolName:        "Bash",
-				RawCommand:      command,
-				NormalizedCmd:   normalizeCmdName(parts[0]),
-				TriggeredLayers: `["Layer 2: CONTEXTUAL_BLOCKED"]`,
-				AuthRequired:    false,
-				FinalAction:     "block",
-				ProjectDir:      projectDir,
-			})
-			blockExit(reason)
-		}
 	}
 
 	// ═══ Pass 2: Interactive authorization scan (Layer 3 + Layer 4) ═══
 	var cache *SessionCache
 	if cfg.SessionCache.Enabled {
 		cache = loadSessionCache(cfg.DataDir)
+	}
+
+	// Layer 3 pre-check: pipe-to-shell pattern (raw command, before sub-command loop)
+	if pipeToShell {
+		if !handleInteractiveAuth(cache, sid, command, command, parsed[0], projectDir, pipeReason,
+			[]string{"Layer 3: INTERACTIVE_AUTH (pipe-to-shell)"}, toolDesc) {
+			blockExit(pipeReason + " - denied by user")
+		}
 	}
 
 	for _, parts := range parsed {
@@ -316,6 +297,15 @@ func handleBashTool(p Payload, projectDir string) {
 		if hit, desc := checkGlobalInstallAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (global-install)"}, toolDesc) {
+				blockExit(desc + " - denied by user")
+			}
+			continue
+		}
+
+		// Layer 3e: Dangerous operations (formerly Layer 2, now interactive auth)
+		if hit, desc := checkDangerousOpsAuth(parts, projectDir); hit {
+			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
+				[]string{"Layer 3: INTERACTIVE_AUTH (dangerous-ops)"}, toolDesc) {
 				blockExit(desc + " - denied by user")
 			}
 			continue

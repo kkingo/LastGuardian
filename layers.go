@@ -59,7 +59,8 @@ var alwaysBlocked = map[string]string{
 	"npx": "Remote package execution blocked",
 }
 
-// checkAlwaysBlocked checks if the command name is in the always-blocked list.
+// checkAlwaysBlocked checks if the command name is in the always-blocked list,
+// plus subcommand checks for commands that need deeper inspection.
 func checkAlwaysBlocked(parts []string) (bool, string) {
 	if len(parts) == 0 {
 		return false, ""
@@ -68,12 +69,23 @@ func checkAlwaysBlocked(parts []string) (bool, string) {
 	if reason, ok := alwaysBlocked[base]; ok {
 		return true, fmt.Sprintf("%s: %s", reason, base)
 	}
+	// Windows user management: net user / net localgroup
+	if base == "net" {
+		sub := getFirstNonFlag(parts, 1)
+		if isOneOf(sub, "user", "localgroup") {
+			return true, fmt.Sprintf("User management blocked: net %s", sub)
+		}
+	}
 	return false, ""
 }
 
-// ── Layer 2: CONTEXTUAL_BLOCKED ──
+// ── Layer 2: ELIMINATED ──
+// All former Layer 2 rules moved to Layer 3 (interactive auth) except
+// net user/localgroup which moved to Layer 1.
 
-func checkContextual(parts []string, projectDir string) (bool, string) {
+// checkDangerousOpsAuth checks for dangerous operations that require
+// interactive authorization. These were formerly Layer 2 hard blocks.
+func checkDangerousOpsAuth(parts []string, projectDir string) (bool, string) {
 	if len(parts) == 0 {
 		return false, ""
 	}
@@ -82,7 +94,7 @@ func checkContextual(parts []string, projectDir string) (bool, string) {
 
 	switch base {
 
-	// Rule group 1: git dangerous operations (7 sub-rules)
+	// git dangerous operations
 	case "git":
 		switch sub {
 		case "push":
@@ -111,25 +123,24 @@ func checkContextual(parts []string, projectDir string) (bool, string) {
 			}
 		}
 
-	// Rule group 2: npm / pnpm / yarn (publish only; global install moved to Layer 3)
+	// Package publish
 	case "npm", "pnpm", "yarn":
 		if sub == "publish" {
-			return true, fmt.Sprintf("Package publish blocked: %s publish", base)
+			return true, fmt.Sprintf("Package publish: %s publish", base)
 		}
 
-	// Rule group 3: pip / pip3 (uninstall only; global install moved to Layer 3)
+	// Package uninstall
 	case "pip", "pip3":
 		if sub == "uninstall" {
-			return true, fmt.Sprintf("Package uninstall blocked: %s uninstall", base)
+			return true, fmt.Sprintf("Package uninstall: %s uninstall", base)
 		}
 
-	// Rule group 4: gem (uninstall only; install moved to Layer 3)
 	case "gem":
 		if sub == "uninstall" {
-			return true, "Package uninstall blocked: gem uninstall"
+			return true, "Package uninstall: gem uninstall"
 		}
 
-	// Rule group 8: docker
+	// Docker destructive operations
 	case "docker":
 		switch sub {
 		case "volume":
@@ -154,27 +165,20 @@ func checkContextual(parts []string, projectDir string) (bool, string) {
 			}
 		}
 
-	// Rule group 9: docker-compose (hyphenated)
 	case "docker-compose":
 		if contains(parts, "down") && hasAnyFlag(parts, "-v", "--volumes") {
 			return true, "Dangerous: docker-compose down -v (destroys volumes)"
 		}
 
-	// Rule group 10: Windows user management
-	case "net":
-		if isOneOf(sub, "user", "localgroup") {
-			return true, fmt.Sprintf("User management blocked: net %s", sub)
-		}
-
-	// Rule group 11: PowerShell obfuscated commands
+	// PowerShell obfuscated commands
 	case "powershell", "pwsh":
 		for _, arg := range parts[1:] {
 			if strings.HasPrefix(strings.ToLower(arg), "-enc") {
-				return true, "Obfuscated command blocked: PowerShell -EncodedCommand"
+				return true, "Obfuscated command: PowerShell -EncodedCommand"
 			}
 		}
 
-	// Rule group 12: cp/mv outside project
+	// cp/mv outside project
 	case "cp", "mv":
 		if ok, extPath := pathsInProject(parts, projectDir); !ok {
 			return true, fmt.Sprintf("%s targets path outside project: %s", base, extPath)

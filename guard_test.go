@@ -20,6 +20,10 @@ func TestAlwaysBlocked(t *testing.T) {
 		{"git status allowed", []string{"git", "status"}, false},
 		{"cat allowed", []string{"cat", "file.txt"}, false},
 		{"echo allowed", []string{"echo", "hello"}, false},
+		// net user/localgroup moved from Layer 2 to Layer 1
+		{"net user blocked", []string{"net", "user", "admin"}, true},
+		{"net localgroup blocked", []string{"net", "localgroup", "admins"}, true},
+		{"net view allowed", []string{"net", "view"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -31,13 +35,14 @@ func TestAlwaysBlocked(t *testing.T) {
 	}
 }
 
-func TestContextualBlocked(t *testing.T) {
+func TestDangerousOpsAuth(t *testing.T) {
 	projectDir := "/test/project"
 	tests := []struct {
 		name   string
 		parts  []string
 		expect bool
 	}{
+		// git dangerous operations
 		{"git push force", []string{"git", "push", "--force"}, true},
 		{"git push -f", []string{"git", "push", "-f"}, true},
 		{"git push ok", []string{"git", "push"}, false},
@@ -49,24 +54,27 @@ func TestContextualBlocked(t *testing.T) {
 		{"git clean -n", []string{"git", "clean", "-n"}, false},
 		{"git branch -D", []string{"git", "branch", "-D", "feature"}, true},
 		{"git branch list", []string{"git", "branch"}, false},
-		// Global installs moved to Layer 3 (interactive auth), no longer blocked here
-		{"npm -g (now L3)", []string{"npm", "install", "-g", "pkg"}, false},
-		{"npm local", []string{"npm", "install", "pkg"}, false},
+		// Package publish / uninstall
 		{"npm publish", []string{"npm", "publish"}, true},
-		{"pip install no venv (now L3)", []string{"pip", "install", "pkg"}, false},
+		{"npm install (safe)", []string{"npm", "install", "pkg"}, false},
 		{"pip uninstall", []string{"pip", "uninstall", "pkg"}, true},
-		{"cargo install (now L3)", []string{"cargo", "install", "tool"}, false},
-		{"cargo build", []string{"cargo", "build"}, false},
-		{"go install (now L3)", []string{"go", "install", "tool"}, false},
-		{"go build", []string{"go", "build"}, false},
+		{"gem uninstall", []string{"gem", "uninstall", "pkg"}, true},
+		// Docker destructive
+		{"docker volume rm", []string{"docker", "volume", "rm", "vol"}, true},
+		{"docker system prune", []string{"docker", "system", "prune"}, true},
+		{"docker compose down -v", []string{"docker", "compose", "down", "-v"}, true},
+		{"docker ps (safe)", []string{"docker", "ps"}, false},
+		// PowerShell obfuscated
 		{"powershell enc", []string{"powershell", "-EncodedCommand", "abc"}, true},
 		{"powershell normal", []string{"powershell", "-Command", "ls"}, false},
+		// net user NOT here (moved to Layer 1)
+		{"net user (not here)", []string{"net", "user", "admin"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blocked, _ := checkContextual(tt.parts, projectDir)
-			if blocked != tt.expect {
-				t.Errorf("got %v, want %v", blocked, tt.expect)
+			hit, _ := checkDangerousOpsAuth(tt.parts, projectDir)
+			if hit != tt.expect {
+				t.Errorf("got %v, want %v", hit, tt.expect)
 			}
 		})
 	}

@@ -100,9 +100,82 @@ func handleFileTool(p Payload, projectDir string) {
 
 	toolDesc := p.ToolInput["description"]
 	absPath := toAbsNormalized(path, projectDir)
+
+	// Layer 2: Critical path write protection (Edit/Write only)
+	if isWriteTool(p.ToolName) {
+		if hit, desc := checkCriticalPath(absPath, &cfg); hit {
+			sid := getSessionID()
+			if cfg.Mode == "silent" {
+				recordHistory(HistoryRecord{
+					Timestamp:       time.Now().Format(time.RFC3339),
+					SessionID:       sid,
+					ToolName:        p.ToolName,
+					RawCommand:      absPath,
+					NormalizedCmd:   p.ToolName,
+					TriggeredLayers: `["Layer 2: CRITICAL_PROTECTED (path)"]`,
+					AuthRequired:    true,
+					UserDecision:    "auto-deny",
+					FinalAction:     "block",
+					ProjectDir:      projectDir,
+				})
+				blockExit(desc + " - auto-denied (silent mode)")
+			}
+			// Interactive mode: show dialog
+			summary := buildApprovalSummary(desc, fmt.Sprintf("%s(%s)", p.ToolName, absPath),
+				[]string{p.ToolName, absPath}, projectDir,
+				[]string{"Layer 2: CRITICAL_PROTECTED (path)"}, &cfg)
+			summary.SessionID = sid
+			summary.ProjectDir = projectDir
+			summary.ToolDescription = toolDesc
+			if !dialog.RequestApproval(summary) {
+				recordHistory(HistoryRecord{
+					Timestamp:       time.Now().Format(time.RFC3339),
+					SessionID:       sid,
+					ToolName:        p.ToolName,
+					RawCommand:      absPath,
+					NormalizedCmd:   p.ToolName,
+					TriggeredLayers: `["Layer 2: CRITICAL_PROTECTED (path)"]`,
+					AuthRequired:    true,
+					UserDecision:    "deny",
+					FinalAction:     "block",
+					ProjectDir:      projectDir,
+				})
+				blockExit(desc + " - denied by user")
+			}
+			recordHistory(HistoryRecord{
+				Timestamp:       time.Now().Format(time.RFC3339),
+				SessionID:       sid,
+				ToolName:        p.ToolName,
+				RawCommand:      absPath,
+				NormalizedCmd:   p.ToolName,
+				TriggeredLayers: `["Layer 2: CRITICAL_PROTECTED (path)"]`,
+				AuthRequired:    true,
+				UserDecision:    "allow",
+				FinalAction:     "allow",
+				ProjectDir:      projectDir,
+			})
+			return
+		}
+	}
+
 	if isOutsideProject(absPath, projectDir, &cfg) {
-		// Layer 4: PATH_BOUNDARY
+		// Layer 4: PATH_BOUNDARY — silent mode: auto-allow
 		sid := getSessionID()
+		if cfg.Mode == "silent" {
+			recordHistory(HistoryRecord{
+				Timestamp:       time.Now().Format(time.RFC3339),
+				SessionID:       sid,
+				ToolName:        p.ToolName,
+				RawCommand:      absPath,
+				NormalizedCmd:   p.ToolName,
+				TriggeredLayers: `["Layer 4: PATH_BOUNDARY"]`,
+				AuthRequired:    true,
+				UserDecision:    "auto-allow",
+				FinalAction:     "allow",
+				ProjectDir:      projectDir,
+			})
+			return
+		}
 		summary := buildApprovalSummary(
 			"Path outside project",
 			fmt.Sprintf("%s(%s)", p.ToolName, absPath),
@@ -258,10 +331,32 @@ func handleBashTool(p Payload, projectDir string) {
 		}
 	}
 
-	// ═══ Pass 2: Interactive authorization scan (Layer 3 + Layer 4) ═══
+	// ═══ Pass 2: L2 Critical + L3 Interactive + L4 Path Boundary ═══
 	var cache *SessionCache
 	if cfg.SessionCache.Enabled {
 		cache = loadSessionCache(cfg.DataDir)
+	}
+
+	for _, parts := range parsed {
+		cmdStr := strings.Join(parts, " ")
+
+		// Layer 2a: Critical commands (npx, kill, chmod — dialog/silent-deny)
+		if hit, desc := checkCriticalCommands(parts); hit {
+			if !handleCriticalAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
+				[]string{"Layer 2: CRITICAL_PROTECTED (command)"}, toolDesc) {
+				blockExit(desc + " - denied")
+			}
+			continue
+		}
+
+		// Layer 2b: Critical operations (git push --force, npm publish, docker destroy)
+		if hit, desc := checkCriticalOps(parts); hit {
+			if !handleCriticalAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
+				[]string{"Layer 2: CRITICAL_PROTECTED (operation)"}, toolDesc) {
+				blockExit(desc + " - denied")
+			}
+			continue
+		}
 	}
 
 	// Layer 3 pre-check: pipe-to-shell pattern (raw command, before sub-command loop)
@@ -275,7 +370,7 @@ func handleBashTool(p Payload, projectDir string) {
 	for _, parts := range parsed {
 		cmdStr := strings.Join(parts, " ")
 
-		// Layer 3a: Git remote modification (prompt)
+		// Layer 3a: Git remote modification
 		if hit, desc := checkGitRemoteAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (git-remote)"}, toolDesc) {
@@ -284,7 +379,7 @@ func handleBashTool(p Payload, projectDir string) {
 			continue
 		}
 
-		// Layer 3b: Network commands (always prompt)
+		// Layer 3b: Network commands
 		if hit, desc := checkNetworkAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (network)"}, toolDesc) {
@@ -293,7 +388,7 @@ func handleBashTool(p Payload, projectDir string) {
 			continue
 		}
 
-		// Layer 3d: Global install commands (prompt)
+		// Layer 3d: Global install commands
 		if hit, desc := checkGlobalInstallAuth(parts); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (global-install)"}, toolDesc) {
@@ -302,7 +397,7 @@ func handleBashTool(p Payload, projectDir string) {
 			continue
 		}
 
-		// Layer 3e: Dangerous operations (formerly Layer 2, now interactive auth)
+		// Layer 3e: Dangerous operations (local-destructive, recoverable)
 		if hit, desc := checkDangerousOpsAuth(parts, projectDir); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (dangerous-ops)"}, toolDesc) {
@@ -311,7 +406,7 @@ func handleBashTool(p Payload, projectDir string) {
 			continue
 		}
 
-		// Layer 3c: Path-sensitive commands (rm/rmdir, path-based judgment)
+		// Layer 3c: Path-sensitive commands (rm/rmdir)
 		if hit, desc := checkPathSensitiveAuth(parts, projectDir); hit {
 			if !handleInteractiveAuth(cache, sid, command, cmdStr, parts, projectDir, desc,
 				[]string{"Layer 3: INTERACTIVE_AUTH (path-sensitive)"}, toolDesc) {
@@ -320,7 +415,7 @@ func handleBashTool(p Payload, projectDir string) {
 			continue
 		}
 
-		// Layer 4: Path boundary (embedded paths in all commands)
+		// Layer 4: Path boundary
 		outsidePaths := checkPathBoundary(parts, projectDir, &cfg)
 		for _, p := range outsidePaths {
 			desc := "Path outside project: " + p
@@ -342,7 +437,41 @@ func handleBashTool(p Payload, projectDir string) {
 	})
 }
 
-// handleInteractiveAuth handles the interactive authorization flow for a command.
+// handleCriticalAuth handles L2 CRITICAL_PROTECTED authorization.
+// Interactive mode: show dialog. Silent mode: auto-deny.
+func handleCriticalAuth(
+	cache *SessionCache,
+	sessionID string,
+	fullCommand string,
+	cmdStr string,
+	parts []string,
+	projectDir string,
+	desc string,
+	layers []string,
+	toolDescription string,
+) bool {
+	if cfg.Mode == "silent" {
+		// Silent mode: auto-deny L2 operations
+		recordHistory(HistoryRecord{
+			Timestamp:       time.Now().Format(time.RFC3339),
+			SessionID:       sessionID,
+			ToolName:        "Bash",
+			RawCommand:      fullCommand,
+			NormalizedCmd:   normalizeCmdName(parts[0]),
+			TriggeredLayers: toJSON(layers),
+			AuthRequired:    true,
+			UserDecision:    "auto-deny",
+			FinalAction:     "block",
+			ProjectDir:      projectDir,
+		})
+		return false
+	}
+	// Interactive mode: delegate to interactive auth (show dialog)
+	return handleInteractiveAuth(cache, sessionID, fullCommand, cmdStr, parts, projectDir, desc, layers, toolDescription)
+}
+
+// handleInteractiveAuth handles L3 INTERACTIVE_AUTH authorization.
+// Interactive mode: show dialog. Silent mode: auto-allow.
 // Returns true if allowed, false if denied.
 func handleInteractiveAuth(
 	cache *SessionCache,
@@ -355,6 +484,23 @@ func handleInteractiveAuth(
 	layers []string,
 	toolDescription string,
 ) bool {
+	// Silent mode: auto-allow L3 operations
+	if cfg.Mode == "silent" {
+		recordHistory(HistoryRecord{
+			Timestamp:       time.Now().Format(time.RFC3339),
+			SessionID:       sessionID,
+			ToolName:        "Bash",
+			RawCommand:      fullCommand,
+			NormalizedCmd:   normalizeCmdName(parts[0]),
+			TriggeredLayers: toJSON(layers),
+			AuthRequired:    true,
+			UserDecision:    "auto-allow",
+			FinalAction:     "allow",
+			ProjectDir:      projectDir,
+		})
+		return true
+	}
+
 	cacheKey := computeCacheKey(cmdStr, projectDir)
 
 	// Check session cache first
@@ -439,6 +585,11 @@ func recordPassthrough(p Payload, projectDir string, toolName string) {
 		FinalAction: "allow",
 		ProjectDir:  projectDir,
 	})
+}
+
+// isWriteTool returns true for tools that modify file content.
+func isWriteTool(toolName string) bool {
+	return toolName == "Edit" || toolName == "Write"
 }
 
 // toJSON converts a string slice to a JSON array string.

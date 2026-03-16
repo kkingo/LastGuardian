@@ -11,6 +11,7 @@ import (
 func defaultConfig() GuardConfig {
 	return GuardConfig{
 		Version: 1,
+		Mode:    "interactive",
 		DataDir: "~/.claude/hooks/data",
 		SessionCache: SessionCacheCfg{
 			Enabled:   true,
@@ -46,7 +47,7 @@ func loadConfig() GuardConfig {
 	configPath := os.Getenv("GUARD_CONFIG_PATH")
 	if configPath == "" {
 		home, _ := os.UserHomeDir()
-		configPath = filepath.Join(home, ".claude", "hooks", "guard-config.json")
+		configPath = filepath.Join(home, ".claude", "hooks", "data", "guard-config.json")
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -59,7 +60,12 @@ func loadConfig() GuardConfig {
 	// 2. Unmarshal onto default config (only overrides specified fields)
 	_ = json.Unmarshal(data, &cfg)
 
-	// 3. Expand ~ in paths
+	// 3. Normalize mode
+	if cfg.Mode == "" {
+		cfg.Mode = "interactive"
+	}
+
+	// 4. Expand ~ in paths
 	cfg.DataDir = expandHome(cfg.DataDir)
 	for i, d := range cfg.AllowedDirs {
 		cfg.AllowedDirs[i] = expandHome(d)

@@ -68,14 +68,16 @@ type HistoryRecord struct {
 
 // GuardConfig represents the full guard-config.json structure.
 type GuardConfig struct {
-	Version      int              `json:"version"`
-	DataDir      string           `json:"data_dir"`
-	SessionCache SessionCacheCfg  `json:"session_cache"`
-	History      HistoryCfg       `json:"history"`
-	Dialog       DialogCfg        `json:"dialog"`
-	RiskScoring  RiskScoringCfg   `json:"risk_scoring"`
-	AllowedDirs  []string         `json:"allowed_dirs"`
-	CustomRules  CustomRulesCfg   `json:"custom_rules"`
+	Version       int              `json:"version"`
+	Mode          string           `json:"mode"` // "interactive" (default) or "silent"
+	DataDir       string           `json:"data_dir"`
+	SessionCache  SessionCacheCfg  `json:"session_cache"`
+	History       HistoryCfg       `json:"history"`
+	Dialog        DialogCfg        `json:"dialog"`
+	RiskScoring   RiskScoringCfg   `json:"risk_scoring"`
+	AllowedDirs   []string         `json:"allowed_dirs"`
+	CriticalPaths []string         `json:"critical_paths"`
+	CustomRules   CustomRulesCfg   `json:"custom_rules"`
 }
 
 // SessionCacheCfg configures session cache behavior.

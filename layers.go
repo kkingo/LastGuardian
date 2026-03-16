@@ -13,14 +13,7 @@ var alwaysBlocked = map[string]string{
 	"shred":    "File destruction blocked",
 	"truncate": "File truncation blocked",
 
-	// Process management
-	"kill":     "Process termination blocked",
-	"pkill":    "Process termination blocked",
-	"killall":  "Process termination blocked",
-	"taskkill": "Process termination blocked",
-
 	// Permission & ownership
-	"chmod": "Permission modification blocked",
 	"chown": "Ownership modification blocked",
 	"chgrp": "Group modification blocked",
 
@@ -55,8 +48,50 @@ var alwaysBlocked = map[string]string{
 	"crontab": "Cron job modification blocked",
 	"at":      "Scheduled task blocked",
 
-	// Remote package execution
-	"npx": "Remote package execution blocked",
+	// Windows LOLBins
+	"certutil":    "LOLBin blocked: certutil",
+	"bitsadmin":   "LOLBin blocked: bitsadmin",
+	"mshta":       "LOLBin blocked: mshta",
+	"regsvr32":    "LOLBin blocked: regsvr32",
+	"rundll32":    "LOLBin blocked: rundll32",
+	"msiexec":     "LOLBin blocked: msiexec",
+	"wscript":     "LOLBin blocked: wscript",
+	"cscript":     "LOLBin blocked: cscript",
+	"installutil": "LOLBin blocked: installutil",
+	"regasm":      "LOLBin blocked: regasm",
+	"regsvcs":     "LOLBin blocked: regsvcs",
+
+	// System configuration & network management
+	"netsh":    "System config blocked: netsh",
+	"dism":     "System config blocked: dism",
+	"sfc":      "System config blocked: sfc",
+	"fsutil":   "System config blocked: fsutil",
+	"cipher":   "System config blocked: cipher",
+	"attrib":   "System config blocked: attrib",
+	"subst":    "System config blocked: subst",
+	"shutdown": "System config blocked: shutdown",
+	"logoff":   "System config blocked: logoff",
+	"secedit":  "System config blocked: secedit",
+	"auditpol": "System config blocked: auditpol",
+	"gpupdate": "System config blocked: gpupdate",
+
+	// Linux/cross-platform system management
+	"systemctl":          "System management blocked: systemctl",
+	"service":            "System management blocked: service",
+	"useradd":            "User management blocked: useradd",
+	"userdel":            "User management blocked: userdel",
+	"usermod":            "User management blocked: usermod",
+	"groupadd":           "Group management blocked: groupadd",
+	"groupdel":           "Group management blocked: groupdel",
+	"groupmod":           "Group management blocked: groupmod",
+	"passwd":             "User management blocked: passwd",
+	"chpasswd":           "User management blocked: chpasswd",
+	"mount":              "System management blocked: mount",
+	"umount":             "System management blocked: umount",
+	"iptables":           "Firewall blocked: iptables",
+	"nft":                "Firewall blocked: nft",
+	"visudo":             "Privilege config blocked: visudo",
+	"update-alternatives": "System defaults blocked: update-alternatives",
 }
 
 // checkAlwaysBlocked checks if the command name is in the always-blocked list,
@@ -79,12 +114,129 @@ func checkAlwaysBlocked(parts []string) (bool, string) {
 	return false, ""
 }
 
-// ── Layer 2: ELIMINATED ──
-// All former Layer 2 rules moved to Layer 3 (interactive auth) except
-// net user/localgroup which moved to Layer 1.
+// ── Layer 2: CRITICAL_PROTECTED ──
+// Interactive mode: WPF dialog. Silent mode: auto-deny (exit 2).
+
+// criticalCommands: commands that moved from L1 to L2 (need human override option).
+var criticalCommands = map[string]string{
+	"npx":      "Remote package execution: npx",
+	"kill":     "Process termination: kill",
+	"pkill":    "Process termination: pkill",
+	"killall":  "Process termination: killall",
+	"taskkill": "Process termination: taskkill",
+	"chmod":    "Permission modification: chmod",
+}
+
+// checkCriticalCommands checks if a command is in the L2 critical list.
+func checkCriticalCommands(parts []string) (bool, string) {
+	if len(parts) == 0 {
+		return false, ""
+	}
+	base := normalizeCmdName(parts[0])
+	if desc, ok := criticalCommands[base]; ok {
+		return true, desc
+	}
+	return false, ""
+}
+
+// checkCriticalOps checks for dangerous operations elevated from L3 to L2.
+// These are irreversible or externally visible operations.
+func checkCriticalOps(parts []string) (bool, string) {
+	if len(parts) == 0 {
+		return false, ""
+	}
+	base := normalizeCmdName(parts[0])
+	sub := getFirstNonFlag(parts, 1)
+
+	switch base {
+	case "git":
+		if sub == "push" && hasAnyFlag(parts, "--force", "-f", "--force-with-lease") {
+			return true, "Critical: git push --force"
+		}
+	case "npm", "pnpm", "yarn":
+		if sub == "publish" {
+			return true, fmt.Sprintf("Critical: %s publish", base)
+		}
+	case "docker":
+		switch sub {
+		case "volume":
+			volSub := getFirstNonFlag(parts, 2)
+			if volSub == "volume" {
+				volSub = getFirstNonFlag(parts, 3)
+			}
+			if isOneOf(volSub, "rm", "remove", "prune") {
+				return true, fmt.Sprintf("Critical: docker volume %s", volSub)
+			}
+		case "system":
+			sysSub := getFirstNonFlag(parts, 2)
+			if sysSub == "system" {
+				sysSub = getFirstNonFlag(parts, 3)
+			}
+			if sysSub == "prune" {
+				return true, "Critical: docker system prune"
+			}
+		case "compose":
+			if contains(parts, "down") && hasAnyFlag(parts, "-v", "--volumes") {
+				return true, "Critical: docker compose down -v (destroys volumes)"
+			}
+		}
+	case "docker-compose":
+		if contains(parts, "down") && hasAnyFlag(parts, "-v", "--volumes") {
+			return true, "Critical: docker-compose down -v (destroys volumes)"
+		}
+	}
+	return false, ""
+}
+
+// defaultCriticalPaths are built-in critical path patterns for L2 write protection.
+var defaultCriticalPaths = []string{
+	"/.claude/hooks/guard.exe",
+	"/.claude/hooks/data/",
+	"/.claude/hooks/guard-history.exe",
+	"/.claude/settings.json",
+	"/etc/hosts",
+	"/drivers/etc/hosts",
+	"/.gitconfig",
+	"/.config/git/",
+	"/.npmrc",
+	"/.ssh/",
+	"/.bashrc",
+	"/.bash_profile",
+	"/.profile",
+	"/.zshrc",
+}
+
+// checkCriticalPath checks if a file path matches any critical path pattern.
+func checkCriticalPath(filePath string, cfg *GuardConfig) (bool, string) {
+	normalized := strings.ReplaceAll(strings.ToLower(filePath), "\\", "/")
+
+	patterns := defaultCriticalPaths
+	if len(cfg.CriticalPaths) > 0 {
+		patterns = cfg.CriticalPaths
+	}
+
+	for _, pattern := range patterns {
+		p := strings.ToLower(pattern)
+		if strings.HasSuffix(p, "/") {
+			// Directory pattern: match if path contains this directory
+			if strings.Contains(normalized, p) {
+				return true, "Critical path protected: " + filePath
+			}
+		} else {
+			// File pattern: match if path ends with or contains this pattern
+			if strings.HasSuffix(normalized, p) || strings.Contains(normalized, p) {
+				return true, "Critical path protected: " + filePath
+			}
+		}
+	}
+	return false, ""
+}
+
+// ── Layer 3: INTERACTIVE_AUTH ──
+// Interactive mode: WPF dialog. Silent mode: auto-allow (exit 0).
 
 // checkDangerousOpsAuth checks for dangerous operations that require
-// interactive authorization. These were formerly Layer 2 hard blocks.
+// interactive authorization (L3). Excludes ops elevated to L2.
 func checkDangerousOpsAuth(parts []string, projectDir string) (bool, string) {
 	if len(parts) == 0 {
 		return false, ""
@@ -94,13 +246,9 @@ func checkDangerousOpsAuth(parts []string, projectDir string) (bool, string) {
 
 	switch base {
 
-	// git dangerous operations
+	// git local-destructive operations (recoverable via reflog)
 	case "git":
 		switch sub {
-		case "push":
-			if hasAnyFlag(parts, "--force", "-f", "--force-with-lease") {
-				return true, "Dangerous: git push --force"
-			}
 		case "reset":
 			if hasFlag(parts, "--hard") {
 				return true, "Dangerous: git reset --hard"
@@ -123,13 +271,7 @@ func checkDangerousOpsAuth(parts []string, projectDir string) (bool, string) {
 			}
 		}
 
-	// Package publish
-	case "npm", "pnpm", "yarn":
-		if sub == "publish" {
-			return true, fmt.Sprintf("Package publish: %s publish", base)
-		}
-
-	// Package uninstall
+	// Package uninstall (reversible)
 	case "pip", "pip3":
 		if sub == "uninstall" {
 			return true, fmt.Sprintf("Package uninstall: %s uninstall", base)
@@ -138,36 +280,6 @@ func checkDangerousOpsAuth(parts []string, projectDir string) (bool, string) {
 	case "gem":
 		if sub == "uninstall" {
 			return true, "Package uninstall: gem uninstall"
-		}
-
-	// Docker destructive operations
-	case "docker":
-		switch sub {
-		case "volume":
-			volSub := getFirstNonFlag(parts, 2)
-			if volSub == "volume" {
-				volSub = getFirstNonFlag(parts, 3)
-			}
-			if isOneOf(volSub, "rm", "remove", "prune") {
-				return true, fmt.Sprintf("Dangerous: docker volume %s", volSub)
-			}
-		case "system":
-			sysSub := getFirstNonFlag(parts, 2)
-			if sysSub == "system" {
-				sysSub = getFirstNonFlag(parts, 3)
-			}
-			if sysSub == "prune" {
-				return true, "Dangerous: docker system prune"
-			}
-		case "compose":
-			if contains(parts, "down") && hasAnyFlag(parts, "-v", "--volumes") {
-				return true, "Dangerous: docker compose down -v (destroys volumes)"
-			}
-		}
-
-	case "docker-compose":
-		if contains(parts, "down") && hasAnyFlag(parts, "-v", "--volumes") {
-			return true, "Dangerous: docker-compose down -v (destroys volumes)"
 		}
 
 	// PowerShell obfuscated commands

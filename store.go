@@ -45,7 +45,27 @@ func initHistoryDB(dataDir string) error {
 
 	// Create tables and indexes (IF NOT EXISTS ensures idempotency)
 	_, err = db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migrate: add tool_description column if missing (for existing databases)
+	_, _ = db.Exec("ALTER TABLE history ADD COLUMN tool_description TEXT")
+
+	// Migrate: create prompts table for capturing user prompts
+	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS prompts (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp   TEXT    NOT NULL,
+			session_id  TEXT    NOT NULL,
+			prompt      TEXT    NOT NULL,
+			project_dir TEXT
+		);
+		CREATE INDEX IF NOT EXISTS idx_prompts_session   ON prompts(session_id);
+		CREATE INDEX IF NOT EXISTS idx_prompts_timestamp ON prompts(timestamp);
+	`)
+
+	return nil
 }
 
 // recordHistory writes a single history record to the database.
@@ -57,13 +77,13 @@ func recordHistory(r HistoryRecord) {
         INSERT INTO history
         (timestamp, session_id, tool_name, raw_command, normalized_cmd,
          risk_level, triggered_layers, auth_required, user_decision,
-         final_action, request_hash, project_dir, cache_hit)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         final_action, request_hash, project_dir, cache_hit, tool_description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.Timestamp, r.SessionID, r.ToolName, r.RawCommand,
 		r.NormalizedCmd, r.RiskLevel, r.TriggeredLayers,
 		boolToInt(r.AuthRequired), nullIfEmpty(r.UserDecision),
 		r.FinalAction, r.RequestHash, r.ProjectDir,
-		boolToInt(r.CacheHit),
+		boolToInt(r.CacheHit), nullIfEmpty(r.ToolDescription),
 	)
 }
 

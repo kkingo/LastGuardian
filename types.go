@@ -64,6 +64,7 @@ type HistoryRecord struct {
 	RequestHash     string `json:"request_hash"`
 	ProjectDir      string `json:"project_dir"`
 	CacheHit        bool   `json:"cache_hit"`
+	ToolDescription string `json:"tool_description,omitempty"`
 }
 
 // GuardConfig represents the full guard-config.json structure.

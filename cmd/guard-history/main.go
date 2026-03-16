@@ -108,6 +108,7 @@ func main() {
 	sessionsCmd := flag.NewFlagSet("sessions", flag.ExitOnError)
 	tailCmd := flag.NewFlagSet("tail", flag.ExitOnError)
 	pruneCmd := flag.NewFlagSet("prune", flag.ExitOnError)
+	promptsCmd := flag.NewFlagSet("prompts", flag.ExitOnError)
 
 	listF := addFilters(listCmd)
 	statsF := addFilters(statsCmd)
@@ -115,6 +116,7 @@ func main() {
 	sessionsF := addFilters(sessionsCmd)
 	tailF := addFilters(tailCmd)
 	pruneF := addFilters(pruneCmd)
+	promptsF := addFilters(promptsCmd)
 	pruneDays := pruneCmd.Int("days", 90, "Delete records older than this many days")
 
 	// Usage
@@ -126,6 +128,7 @@ Usage:
 
 Commands:
   list       List history records (default)
+  prompts    List captured user prompts
   stats      Show statistics summary
   blocked    Show only blocked records
   sessions   List unique sessions with summary
@@ -186,6 +189,9 @@ Examples:
 	case "tail":
 		tailCmd.Parse(os.Args[2:])
 		ff = tailF
+	case "prompts":
+		promptsCmd.Parse(os.Args[2:])
+		ff = promptsF
 	case "prune":
 		pruneCmd.Parse(os.Args[2:])
 		ff = pruneF
@@ -226,6 +232,8 @@ Examples:
 		runStats(db, ff)
 	case "sessions":
 		runSessions(db, ff)
+	case "prompts":
+		runPrompts(db, ff)
 	case "prune":
 		runPrune(db, *pruneDays, *ff.asJSON)
 	}
@@ -298,7 +306,8 @@ func buildFilters(ff filterFlags) whereClause {
 
 	if *ff.since != "" {
 		t := parseSince(*ff.since)
-		w.add("timestamp >= ?", t.Format(time.RFC3339))
+		// Convert to local timezone for consistent string comparison with DB records
+		w.add("timestamp >= ?", t.Local().Format(time.RFC3339))
 	}
 	if *ff.session != "" {
 		w.add("session_id LIKE ?", *ff.session+"%")
@@ -338,6 +347,10 @@ func parseSince(s string) time.Time {
 		}
 	}
 
+	// Try ISO datetime without timezone (treat as UTC)
+	if t, err := time.Parse("2006-01-02T15:04:05", s); err == nil {
+		return t.UTC()
+	}
 	// Try ISO date
 	if t, err := time.Parse("2006-01-02", s); err == nil {
 		return t
@@ -862,4 +875,86 @@ func barWidth(value, maxValue, maxWidth int) int {
 		return 1
 	}
 	return w
+}
+
+// ── Subcommand: prompts ──
+
+func runPrompts(db *sql.DB, ff filterFlags) {
+	var conditions []string
+	var args []interface{}
+
+	if *ff.since != "" {
+		t := parseSince(*ff.since)
+		conditions = append(conditions, "timestamp >= ?")
+		args = append(args, t.Local().Format(time.RFC3339))
+	}
+	if *ff.session != "" {
+		conditions = append(conditions, "session_id LIKE ?")
+		args = append(args, *ff.session+"%")
+	}
+	if *ff.project != "" {
+		conditions = append(conditions, "project_dir LIKE ?")
+		args = append(args, "%"+*ff.project+"%")
+	}
+	if *ff.query != "" {
+		conditions = append(conditions, "prompt LIKE ?")
+		args = append(args, "%"+*ff.query+"%")
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query := "SELECT id, timestamp, session_id, prompt, project_dir FROM prompts" +
+		where + " ORDER BY id ASC LIMIT ?"
+	args = append(args, *ff.limit)
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Query error: %v\n", err)
+		os.Exit(1)
+	}
+	defer rows.Close()
+
+	type promptRow struct {
+		ID         int64  `json:"id"`
+		Timestamp  string `json:"timestamp"`
+		SessionID  string `json:"session_id"`
+		Prompt     string `json:"prompt"`
+		ProjectDir string `json:"project_dir,omitempty"`
+	}
+
+	var prompts []promptRow
+	for rows.Next() {
+		var p promptRow
+		var projDir sql.NullString
+		if err := rows.Scan(&p.ID, &p.Timestamp, &p.SessionID, &p.Prompt, &projDir); err != nil {
+			continue
+		}
+		p.ProjectDir = nullStr(projDir)
+		prompts = append(prompts, p)
+	}
+
+	if *ff.asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(prompts)
+		return
+	}
+
+	if len(prompts) == 0 {
+		fmt.Println("No prompts found.")
+		return
+	}
+
+	fmt.Printf("%-4s  %-20s  %-16s  %s\n", "ID", "TIMESTAMP", "SESSION", "PROMPT")
+	fmt.Println(strings.Repeat("─", 100))
+	for _, p := range prompts {
+		ts := formatTimestamp(p.Timestamp)
+		sess := truncate(p.SessionID, 16)
+		prompt := truncate(p.Prompt, 55)
+		fmt.Printf("%-4d  %-20s  %-16s  %s\n", p.ID, ts, sess, prompt)
+	}
+	fmt.Printf("\nTotal: %d prompts\n", len(prompts))
 }

@@ -1,10 +1,10 @@
 package main
 
 import (
+	"claude-guard/internal/identity"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,14 +16,9 @@ import (
 
 const sessionsDir = "sessions"
 
-// getSessionID creates a unique session identifier based on parent PID
-// and process start time to avoid PID reuse collisions.
+// getSessionID delegates to the shared identity package.
 func getSessionID() string {
-	ppid := os.Getppid()
-	startTime := getProcessStartTime(ppid)
-	raw := fmt.Sprintf("%d_%s", ppid, startTime)
-	h := sha256.Sum256([]byte(raw))
-	return fmt.Sprintf("%d_%s", ppid, hex.EncodeToString(h[:4]))
+	return identity.GetSessionID()
 }
 
 // computeCacheKey computes a SHA-256 hash of the command + project directory.
@@ -165,59 +160,9 @@ func checkWindowsProcessAlive(pid int) bool {
 	return exitCode == STILL_ACTIVE
 }
 
-// getProcessStartTime returns a string representation of the process start time.
-// On Windows, uses the process creation time from the kernel.
-// Falls back to empty string if unavailable.
+// getProcessStartTime delegates to the shared identity package.
 func getProcessStartTime(pid int) string {
-	if runtime.GOOS == "windows" {
-		return getWindowsProcessStartTime(pid)
-	}
-	// Unix fallback: read /proc/<pid>/stat
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return ""
-	}
-	return string(data[:min(64, len(data))])
-}
-
-// getWindowsProcessStartTime uses Windows API to get process creation time.
-func getWindowsProcessStartTime(pid int) string {
-	const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
-	openProcess := kernel32.NewProc("OpenProcess")
-	getProcessTimes := kernel32.NewProc("GetProcessTimes")
-
-	handle, _, _ := openProcess.Call(
-		uintptr(PROCESS_QUERY_LIMITED_INFORMATION),
-		0,
-		uintptr(pid),
-	)
-	if handle == 0 {
-		return ""
-	}
-	defer syscall.CloseHandle(syscall.Handle(handle))
-
-	var creation, exit, kernel, user syscall.Filetime
-	ret, _, _ := getProcessTimes.Call(
-		handle,
-		uintptr(unsafe.Pointer(&creation)),
-		uintptr(unsafe.Pointer(&exit)),
-		uintptr(unsafe.Pointer(&kernel)),
-		uintptr(unsafe.Pointer(&user)),
-	)
-	if ret == 0 {
-		return ""
-	}
-	t := time.Unix(0, creation.Nanoseconds())
-	return t.Format(time.RFC3339Nano)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return identity.GetProcessStartTime(pid)
 }
 
 // decisionStr converts a boolean allow/deny to string.

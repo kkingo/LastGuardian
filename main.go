@@ -117,6 +117,7 @@ func handleFileTool(p Payload, projectDir string) {
 					UserDecision:    "auto-deny",
 					FinalAction:     "block",
 					ProjectDir:      projectDir,
+					ToolDescription: toolDesc,
 				})
 				blockExit(desc + " - auto-denied (silent mode)")
 			}
@@ -139,6 +140,7 @@ func handleFileTool(p Payload, projectDir string) {
 					UserDecision:    "deny",
 					FinalAction:     "block",
 					ProjectDir:      projectDir,
+					ToolDescription: toolDesc,
 				})
 				blockExit(desc + " - denied by user")
 			}
@@ -153,6 +155,7 @@ func handleFileTool(p Payload, projectDir string) {
 				UserDecision:    "allow",
 				FinalAction:     "allow",
 				ProjectDir:      projectDir,
+				ToolDescription: toolDesc,
 			})
 			return
 		}
@@ -173,6 +176,7 @@ func handleFileTool(p Payload, projectDir string) {
 				UserDecision:    "auto-allow",
 				FinalAction:     "allow",
 				ProjectDir:      projectDir,
+				ToolDescription: toolDesc,
 			})
 			return
 		}
@@ -207,6 +211,7 @@ func handleFileTool(p Payload, projectDir string) {
 					RequestHash:     summary.RequestHash,
 					ProjectDir:      projectDir,
 					CacheHit:        true,
+					ToolDescription: toolDesc,
 				})
 				if decision == "deny" {
 					blockExit("Path boundary: access to " + absPath + " denied (cached)")
@@ -243,6 +248,7 @@ func handleFileTool(p Payload, projectDir string) {
 				RequestHash:     summary.RequestHash,
 				ProjectDir:      projectDir,
 				CacheHit:        false,
+				ToolDescription: toolDesc,
 			})
 			if !allowed {
 				blockExit("Path boundary: access to " + absPath + " denied by user")
@@ -265,6 +271,7 @@ func handleFileTool(p Payload, projectDir string) {
 				FinalAction:     "block",
 				RequestHash:     summary.RequestHash,
 				ProjectDir:      projectDir,
+				ToolDescription: toolDesc,
 			})
 			blockExit("Path boundary: access to " + absPath + " denied by user")
 		}
@@ -281,6 +288,7 @@ func handleFileTool(p Payload, projectDir string) {
 			FinalAction:     "allow",
 			RequestHash:     summary.RequestHash,
 			ProjectDir:      projectDir,
+			ToolDescription: toolDesc,
 		})
 		return
 	}
